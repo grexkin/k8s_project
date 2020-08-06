@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: php-demo
+  namespace: test
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      project: www
+      app: php-demo
+  template:
+    metadata:
+      labels:
+        project: www
+        app: php-demo
+    spec:
+      imagePullSecrets:
+      - name: "docker-regsitry-auth" 
+      containers:
+      - name: nginx 
+        image: 192.168.31.70/demo/php-demo:v2 
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+          name: web
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 0.5
+            memory: 256Mi
+          limits:
+            cpu: 1
+            memory: 1Gi
+        livenessProbe:
+          httpGet:
+            path: /status.html
+            port: 80
+          initialDelaySeconds: 20
+          timeoutSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /status.html
+            port: 80
+          initialDelaySeconds: 20
+          timeoutSeconds: 20
+        volumeMounts:
+        - name: nginx-logs 
+          mountPath: /usr/local/nginx/logs
+
+      - name: filebeat
+        image: elastic/filebeat:7.3.2 
+        args: [
+          "-c", "/etc/filebeat.yml",
+          "-e",
+        ]
+        resources:
+          limits:
+            memory: 500Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: filebeat-config
+          mountPath: /etc/filebeat.yml
+          subPath: filebeat.yml
+        - name: nginx-logs 
+          mountPath: /usr/local/nginx/logs
+
+      volumes:
+      - name: nginx-logs
+        emptyDir: {}
+      - name: filebeat-config
+        configMap:
+          name: filebeat-nginx-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: filebeat-nginx-config
+  namespace: test
+  
+data:
+  filebeat.yml: |-
+    filebeat.inputs:
+      - type: log
+        paths:
+          - /usr/local/nginx/logs/access.log
+        # tags: ["access"]
+        fields:
+          app: www
+          type: nginx-access
+        fields_under_root: true
+
+    setup.ilm.enabled: false
+    setup.template.name: "nginx-access"
+    setup.template.pattern: "nginx-access-*"
+
+    output.elasticsearch:
+      hosts: ['elasticsearch.ops:9200']
+      index: "nginx-access-%{+yyyy.MM.dd}"
